@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+LOGFILE="./apache_logs"
+
+HOST="all"
+
+number_of_requests() {
+    declare -A ID_NUMBER_ARR
+    if [ "$HOST" = "all" ]; then
+        while read id _; do
+            (( ID_NUMBER_ARR["$id"]++ ))
+        done
+    else
+        while read id _; do
+            if [ "$id" = "$HOST" ]; then
+                (( ID_NUMBER_ARR["$id"]++ ))
+            fi
+        done
+    fi
+
+    for id in "${!ID_NUMBER_ARR[@]}"; do
+        printf '%d %s\n' "${ID_NUMBER_ARR["$id"]}" "$id"
+    done
+}
+
+
+request_code() {
+    local CODE="$1"
+    if [ "$HOST" = "all" ]; then
+        awk -v code="$CODE" '$9 == code {print $1}' "$LOGFILE" | number_of_requests | sort -rn
+    else
+        awk -v code="$CODE" -v ip="$HOST" '$9 == code && $1 == ip {print $1}' "$LOGFILE" | number_of_requests | sort -rn
+    fi
+}
+
+pages_request() {
+    if [ "$HOST" = "all" ]; then
+        awk '{print $1 "-" $7}' "$LOGFILE" | number_of_requests | sort -rn
+    else
+        awk -v ip="$HOST" '$1 == ip {print $1 "-" $7}' "$LOGFILE" | number_of_requests | sort -rn
+    fi
+}
+
+number_of_bytes() {
+    declare -A ID_NUMBER_BYTES_ARR
+    if [ "$HOST" = "all" ]; then
+        while read id bytes; do
+            val=${ID_NUMBER_BYTES_ARR["$id"]:-0}
+            (( val += bytes ))
+            ID_NUMBER_BYTES_ARR["$id"]=$val
+        done
+    else
+        while read id bytes; do
+            if [ "$id" = "$HOST" ]; then
+                val=${ID_NUMBER_BYTES_ARR["$id"]:-0}
+                (( val += bytes ))
+                ID_NUMBER_BYTES_ARR["$id"]=$val
+            else
+                continue
+            fi
+        done
+    fi
+
+    for id in "${!ID_NUMBER_BYTES_ARR[@]}"; do
+        printf '%-15s %8d\n' "$id" "${ID_NUMBER_BYTES_ARR["$id"]}"
+    done
+}
+
+while getopts ":f:h:nr:pb" opt; do
+    case "${opt}" in
+        f)
+            LOGFILE="$OPTARG"
+            ;;
+        h)
+            HOST="$OPTARG"
+            ;;
+        n)
+            cat "$LOGFILE" | number_of_requests
+            ;;
+        r)
+            REQUEST_CODE="$OPTARG"
+            request_code "$REQUEST_CODE"
+            ;;
+        p)
+            pages_request
+            ;;
+        b)
+            #cat "$LOGFILE" | cut -d' ' -f1,10 | number_of_bytes
+            awk '
+            {
+                r = "^([0-9a-fA-F:.]+)\\s+\\S+\\s+\\S+\\s+\\[[^]]+\\]\\s+\"[^\"]+\"\\s+([0-9]{3})\\s+([0-9]+)"
+                if (match($0, r, arr)) {
+                ip = arr[1]
+                # code = arr[2]  # если нужно, тоже можно брать
+                bytes = arr[3]
+                print ip, bytes
+                }
+            }
+            ' "$LOGFILE" | number_of_bytes
+            ;;
+        :)
+            if [ "$OPTARG" = "h" ]; then
+                HOST="all"
+            else
+                echo "Option -$OPTARG requires an argument." >&2
+                exit 1
+            fi
+            ;;
+        *)
+            exit 2
+            ;;
+    esac
+done
